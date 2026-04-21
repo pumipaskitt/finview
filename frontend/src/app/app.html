@@ -1,0 +1,316 @@
+<main class="dashboard" *ngIf="summary(); else loadingState">
+  <section class="headline">
+    <div>
+      <p class="eyebrow">finView Analytics Terminal</p>
+      <h1>Account Balance Over Time</h1>
+    </div>
+    <div class="headline-actions">
+      <span class="pill">Socket Live</span>
+      <span class="pill soft">{{ summary()!.totalTrades }} closed trades</span>
+    </div>
+  </section>
+
+  <section class="stats-strip">
+    <article class="panel stat-card">
+      <div class="stat-title">Total P/L</div>
+      <div class="stat-value" [class.loss]="summary()!.totalPnL < 0">
+        {{ formatSignedMoney(summary()!.totalPnL) }}
+      </div>
+    </article>
+
+    <article class="panel stat-card gauge-card">
+      <div class="stat-title">Trade Win %</div>
+      <div class="semi-gauge" [ngStyle]="gaugeStyle(circleMetricValue(summary()!.tradeWinPercent))">
+        <div class="semi-gauge__inner">{{ summary()!.tradeWinPercent | number: '1.2-2' }}%</div>
+      </div>
+    </article>
+
+    <article class="panel stat-card avg-card">
+      <div class="stat-title">Avg Win / Avg Loss</div>
+      <div class="stat-value">{{ summary()!.avgWinLossRatio | number: '1.2-2' }}</div>
+      <div class="split-values">
+        <span class="profit">{{ formatMoney(summary()!.avgWinningTrade) }}</span>
+        <span class="loss">-{{ formatMoney(summary()!.avgLosingTrade) }}</span>
+      </div>
+    </article>
+
+    <article class="panel stat-card gauge-card">
+      <div class="stat-title">Day Win %</div>
+      <div class="semi-gauge" [ngStyle]="gaugeStyle(circleMetricValue(summary()!.dayWinPercent))">
+        <div class="semi-gauge__inner">{{ summary()!.dayWinPercent | number: '1.2-2' }}%</div>
+      </div>
+    </article>
+
+    <article class="panel stat-card gauge-card">
+      <div class="stat-title">Profit Factor</div>
+      <div class="donut" [ngStyle]="gaugeStyle(circleMetricValue(summary()!.profitFactor * 20))">
+        <div class="donut__inner">{{ summary()!.profitFactor | number: '1.2-2' }}</div>
+      </div>
+    </article>
+
+    <article class="panel stat-card">
+      <div class="stat-title">Best Day % of Total Profit</div>
+      <div class="stat-value">
+        {{ summary()!.bestDayPercentOfTotalProfit | number: '1.2-2' }}%
+      </div>
+    </article>
+  </section>
+
+  <section class="day-grid">
+    <article class="panel micro-card">
+      <div class="micro-label">Most Active Day</div>
+      <div class="micro-value">{{ mostActiveDay()?.weekday ?? 'N/A' }}</div>
+      <div class="micro-meta">
+        {{ mostActiveDay()?.trades ?? 0 }} trades · {{ summary()!.avgTradesPerDay | number: '1.2-2' }}
+        avg trades/day
+      </div>
+    </article>
+
+    <article class="panel micro-card">
+      <div class="micro-label">Most Profitable Day</div>
+      <div class="micro-value">{{ mostProfitableDay()?.weekday ?? 'N/A' }}</div>
+      <div class="micro-amount profit">
+        {{ formatSignedMoney(mostProfitableDay()?.pnl ?? 0) }}
+      </div>
+    </article>
+
+    <article class="panel micro-card">
+      <div class="micro-label">Least Profitable Day</div>
+      <div class="micro-value">{{ leastProfitableDay()?.weekday ?? 'N/A' }}</div>
+      <div class="micro-amount" [class.loss]="(leastProfitableDay()?.pnl ?? 0) < 0">
+        {{ formatSignedMoney(leastProfitableDay()?.pnl ?? 0) }}
+      </div>
+    </article>
+
+    <article class="panel micro-card">
+      <div class="micro-label">Total Number of Trades</div>
+      <div class="micro-value">{{ summary()!.totalTrades }}</div>
+    </article>
+
+    <article class="panel micro-card">
+      <div class="micro-label">Total Number of Lots Traded</div>
+      <div class="micro-value">{{ summary()!.totalLots | number: '1.2-2' }}</div>
+    </article>
+
+    <article class="panel micro-card">
+      <div class="micro-label">Average Trade Duration</div>
+      <div class="micro-value">{{ formatDuration(summary()!.averageTradeDurationSec) }}</div>
+    </article>
+
+    <article class="panel micro-card">
+      <div class="micro-label">Average Win Duration</div>
+      <div class="micro-value">{{ formatDuration(summary()!.averageWinDurationSec) }}</div>
+    </article>
+
+    <article class="panel micro-card">
+      <div class="micro-label">Average Loss Duration</div>
+      <div class="micro-value">{{ formatDuration(summary()!.averageLossDurationSec) }}</div>
+    </article>
+
+    <article class="panel micro-card direction-card">
+      <div class="micro-label">Trade Direction %</div>
+      <div class="direction-wrap">
+        <div class="direction-text">
+          <div class="micro-value">{{ directionPercent() | number: '1.2-2' }}%</div>
+          <div class="micro-meta">
+            Buy {{ buyCount() }} · Sell {{ sellCount() }}
+          </div>
+        </div>
+        <div class="direction-donut" [ngStyle]="donutStyle()">
+          <div class="direction-donut__inner"></div>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel micro-card">
+      <div class="micro-label">Best Trade</div>
+      <div class="micro-amount profit">{{ formatSignedMoney(bestTrade()?.profitUsd ?? 0) }}</div>
+      <div class="micro-meta" *ngIf="bestTrade() as trade">
+        {{ trade.side }} {{ trade.symbol }} · Exit {{ trade.closePrice | number: '1.2-2' }}
+      </div>
+    </article>
+
+    <article class="panel micro-card">
+      <div class="micro-label">Worst Trade</div>
+      <div class="micro-amount loss">{{ formatSignedMoney(worstTrade()?.profitUsd ?? 0) }}</div>
+      <div class="micro-meta" *ngIf="worstTrade() as trade">
+        {{ trade.side }} {{ trade.symbol }} · Exit {{ trade.closePrice | number: '1.2-2' }}
+      </div>
+    </article>
+  </section>
+
+  <section class="analysis-grid">
+    <article class="panel chart-panel">
+      <div class="section-title">Trade Duration Analysis</div>
+      <div class="h-bars">
+        <div class="h-bar" *ngFor="let bucket of durationBuckets(); trackBy: trackByLabel">
+          <span>{{ bucket.label }}</span>
+          <div class="h-bar__rail">
+            <div
+              class="h-bar__fill neutral"
+              [style.width]="bucketBarWidth(bucket.count, summary()!.totalTrades)"
+            ></div>
+          </div>
+          <strong>{{ bucket.count }}</strong>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel chart-panel">
+      <div class="section-title">Win Rate Analysis</div>
+      <div class="h-bars">
+        <div class="h-bar" *ngFor="let bucket of durationBuckets(); trackBy: trackByLabel">
+          <span>{{ bucket.label }}</span>
+          <div class="h-bar__rail">
+            <div
+              class="h-bar__fill success"
+              [style.width]="bucketBarWidth(bucket.winRate, 100)"
+            ></div>
+          </div>
+          <strong>{{ bucket.winRate | number: '1.0-2' }}%</strong>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <section class="tracker-grid">
+    <article class="panel tracker-panel">
+      <div class="section-title">Topstep Trader Performance Tracker</div>
+      <div class="tracker-meters">
+        <div class="meter">
+          <div class="meter-title">Win Rate Percent</div>
+          <div class="semi-gauge wide" [ngStyle]="gaugeStyle(circleMetricValue(summary()!.tradeWinPercent))">
+            <div class="semi-gauge__inner">{{ summary()!.tradeWinPercent | number: '1.0-0' }}%</div>
+          </div>
+        </div>
+
+        <div class="meter">
+          <div class="meter-title">Avg Winning Trade</div>
+          <div class="semi-gauge wide" [ngStyle]="gaugeStyle(circleMetricValue(summary()!.avgWinningTrade / 10), 100)">
+            <div class="semi-gauge__inner">{{ formatMoney(summary()!.avgWinningTrade) }}</div>
+          </div>
+        </div>
+
+        <div class="meter">
+          <div class="meter-title">Avg Losing Trade</div>
+          <div class="semi-gauge wide danger" [ngStyle]="gaugeStyle(circleMetricValue(summary()!.avgLosingTrade / 10), 100)">
+            <div class="semi-gauge__inner">{{ formatMoney(summary()!.avgLosingTrade) }}</div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel duration-stack">
+      <div class="section-title">Successful Trades by Duration</div>
+      <div class="v-bars">
+        <div class="v-bar" *ngFor="let bucket of durationBuckets(); trackBy: trackByLabel">
+          <div class="v-bar__canvas">
+            <div
+              class="v-bar__segment loss-bg"
+              [style.height]="stackedBarHeight(bucket.losses, summary()!.totalTrades)"
+            ></div>
+            <div
+              class="v-bar__segment win-bg"
+              [style.height]="stackedBarHeight(bucket.wins, summary()!.totalTrades)"
+            ></div>
+          </div>
+          <span>{{ bucket.label }}</span>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <section class="panel calendar-panel">
+    <div class="calendar-head">
+      <div class="calendar-nav">
+        <button type="button" (click)="prevMonth()">‹</button>
+        <strong>{{ monthLabel(activeMonthKey()) }}</strong>
+        <button type="button" (click)="nextMonth()">›</button>
+      </div>
+      <div class="calendar-total">
+        Monthly P/L:
+        <span [class.loss]="activeMonthPnl() < 0">{{ formatSignedMoney(activeMonthPnl()) }}</span>
+      </div>
+      <button class="today-btn" type="button" (click)="resetMonth()">Today</button>
+    </div>
+
+    <div class="calendar-grid">
+      <div class="calendar-weekday" *ngFor="let day of ['Su','Mo','Tu','We','Th','Fr','Sa']">
+        {{ day }}
+      </div>
+
+      <ng-container *ngFor="let week of calendarWeeks(); trackBy: trackByWeek; let weekIndex = index">
+        <div
+          class="calendar-cell"
+          *ngFor="let cell of week; trackBy: trackByCell"
+          [class.current]="cell.isCurrentMonth"
+          [class.today]="cell.isToday"
+          [class.positive]="cell.pnl > 0"
+          [class.negative]="cell.pnl < 0"
+        >
+          <span class="date-number">{{ cell.date ? cell.date.getUTCDate() : '' }}</span>
+          <div class="calendar-pnl" *ngIf="cell.trades">
+            {{ formatSignedMoney(cell.pnl) }}
+          </div>
+          <div class="calendar-trades" *ngIf="cell.trades">{{ cell.trades }} trades</div>
+        </div>
+
+        <div class="week-summary">
+          <span>Week {{ weekIndex + 1 }}</span>
+          <strong [class.loss]="weekTotal(week) < 0">{{ formatSignedMoney(weekTotal(week)) }}</strong>
+          <small>{{ weekTrades(week) }} trades</small>
+        </div>
+      </ng-container>
+    </div>
+  </section>
+
+  <section class="panel balance-panel">
+    <div class="section-title">Account Balance Over Time</div>
+    <svg viewBox="0 0 1040 320" preserveAspectRatio="none" class="balance-chart">
+      <defs>
+        <linearGradient id="balanceFill" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="rgba(72,157,255,0.45)"></stop>
+          <stop offset="100%" stop-color="rgba(72,157,255,0.03)"></stop>
+        </linearGradient>
+      </defs>
+
+      <g class="grid-lines">
+        <line *ngFor="let n of [0,1,2,3,4,5,6,7]" [attr.y1]="n * 40" [attr.y2]="n * 40" x1="0" x2="1040"></line>
+        <line *ngFor="let n of [0,1,2,3,4,5,6,7,8,9,10,11]" [attr.x1]="n * 94.5" [attr.x2]="n * 94.5" y1="0" y2="280"></line>
+      </g>
+
+      <polygon [attr.points]="equitySvgArea()" fill="url(#balanceFill)"></polygon>
+      <polyline [attr.points]="maxLossSvgLine()" class="max-loss-line"></polyline>
+      <polyline [attr.points]="equitySvgLine()" class="balance-line"></polyline>
+    </svg>
+  </section>
+
+  <section class="panel live-panel">
+    <div class="section-title">Live Trades Stream</div>
+    <div class="live-grid" *ngIf="liveTrades().length; else noTrades">
+      <article class="live-card" *ngFor="let trade of liveTrades()">
+        <div>
+          <strong>{{ trade.Symbol }}</strong>
+          <span>{{ trade.Side }} · {{ trade.Strategy_Tag || 'Manual' }}</span>
+        </div>
+        <div class="live-meta">
+          <strong [class.loss]="trade.Profit_USD < 0">{{ formatSignedMoney(trade.Profit_USD) }}</strong>
+          <small>{{ trade.Close_Time | date: 'MMM d, y HH:mm' }}</small>
+        </div>
+      </article>
+    </div>
+
+    <ng-template #noTrades>
+      <div class="empty-state">No socket trade event received yet.</div>
+    </ng-template>
+  </section>
+</main>
+
+<ng-template #loadingState>
+  <main class="dashboard">
+    <section class="panel loading-panel">
+      <h1>Loading dashboard...</h1>
+      <p>Backend is reachable, but stats have not been loaded yet.</p>
+    </section>
+  </main>
+</ng-template>
