@@ -1,7 +1,7 @@
 """
 MT5 Controller — รันบน Windows VPS
 - Poll /internal/accounts ทุก POLL_INTERVAL วินาที
-- พบ account ใหม่ → copy MT5 instance → autologin → spawn worker
+- พบ account ใหม่ → copy MT5 instance → login ผ่าน mt5.initialize() → spawn worker
 - account ถูกลบ/หยุด → kill worker + ปิด terminal
 
 Config via environment variables:
@@ -24,8 +24,6 @@ import logging
 import threading
 import win32gui
 import win32process
-from pywinauto import Application
-from pywinauto.keyboard import send_keys
 
 # ────────────────────────────────────────────────────────
 # Config
@@ -39,14 +37,14 @@ WORKER_SCRIPT = os.environ.get('WORKER_SCRIPT', r'C:\worker.py')
 POLL_INTERVAL = int(os.environ.get('POLL_INTERVAL', '10'))
 SYNC_INTERVAL = int(os.environ.get('SYNC_INTERVAL', '5'))
 
-# APPDATA ของ Windows (default)
 APPDATA_DIR   = os.environ.get('APPDATA', r'C:\Users\Administrator\AppData\Roaming')
 
 # Hash ของ MT5_BASE_DIR ใน MetaQuotes\Terminal\ (หาได้จาก origin.txt)
-# รัน: Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Directory | ForEach-Object {
-#         $o = Join-Path $_.FullName "origin.txt"
-#         if (Test-Path $o) { "$($_.Name) -> $(Get-Content $o)" }
-#       }
+# รัน PowerShell:
+#   Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Directory | ForEach-Object {
+#     $o = Join-Path $_.FullName "origin.txt"
+#     if (Test-Path $o) { "$($_.Name) -> $(Get-Content $o)" }
+#   }
 MT5_BASE_HASH = os.environ.get('MT5_BASE_HASH', 'D0E8209F77C8CF37AD8BF550E51FF075')
 
 ACCOUNTS_URL = f"{API_URL.rstrip('/')}/internal/accounts"
@@ -71,11 +69,11 @@ err = logging.getLogger(__name__).error
 # ────────────────────────────────────────────────────────
 running: dict = {}
 running_lock = threading.Lock()
-# lock สำหรับ GUI autologin — ทำทีละตัวเพื่อป้องกัน keyboard focus conflict
-autologin_lock = threading.Lock()
-# lock สำหรับ mt5.initialize/shutdown — library ไม่ thread-safe
+
+# mt5.initialize/shutdown ไม่ thread-safe — ใช้ lock ทุกครั้ง
 mt5_lock = threading.Lock()
-# tracks account IDs currently being set up (to avoid duplicate threads)
+
+# tracks account IDs ที่กำลัง setup อยู่ (กัน duplicate threads)
 setting_up: set = set()
 setting_up_lock = threading.Lock()
 
@@ -88,6 +86,10 @@ def instance_dir(account_id: str) -> str:
 
 def terminal_exe(account_id: str) -> str:
     return os.path.join(instance_dir(account_id), 'terminal64.exe')
+
+def calc_mt5_hash(terminal_dir: str) -> str:
+    """คำนวณ hash ของ MT5 data directory จาก terminal directory path"""
+    return hashlib.md5(terminal_dir.upper().encode('utf-16-le')).hexdigest().upper()
 
 def create_instance(account_id: str) -> bool:
     dest = instance_dir(account_id)
@@ -110,42 +112,25 @@ def create_instance(account_id: str) -> bool:
         err(f"[{account_id[:8]}] ❌ copytree failed: {e}")
         return False
 
-def preconfigure_instance(account: dict, account_id: str):
-    """เขียน config\common.ini ให้ instance (ใช้ใน MT5 portable หรือ backup เท่านั้น)"""
-    config_dir = os.path.join(instance_dir(account_id), 'config')
-    os.makedirs(config_dir, exist_ok=True)
-    common_ini = os.path.join(config_dir, 'common.ini')
-    content = (
-        '[Common]\n'
-        f'Login={account["login"]}\n'
-        f'Server={account["server"]}\n'
-        'NewsEnable=0\n'
-    )
-    with open(common_ini, 'w', encoding='utf-8') as f:
-        f.write(content)
-    log(f"[{account_id[:8]}] Pre-configured common.ini")
-
-def calc_mt5_hash(terminal_dir: str) -> str:
-    """คำนวณ hash ของ MT5 data directory จาก terminal directory path"""
-    return hashlib.md5(terminal_dir.upper().encode('utf-16-le')).hexdigest().upper()
-
-def pre_bootstrap_instance_data(account_id: str, account: dict):
+def pre_bootstrap_instance_data(account_id: str, account: dict) -> str:
     """
-    คำนวณ hash ของ instance นี้ล่วงหน้า แล้ว copy config จาก working installation
-    เรียกก่อน start_terminal() เพื่อให้ terminal มี server list พร้อมทันที
+    เตรียม data directory ของ instance ก่อน start terminal:
+    - copy servers.dat และ certificates จาก working installation
+    - เขียน common.ini พร้อม Login/Server
+    ทำให้ terminal รู้จัก broker server ทันทีที่เปิด
     """
-    inst_dir  = instance_dir(account_id)
-    inst_hash = calc_mt5_hash(inst_dir)
-    data_dir  = os.path.join(APPDATA_DIR, 'MetaQuotes', 'Terminal', inst_hash)
+    inst_dir   = instance_dir(account_id)
+    inst_hash  = calc_mt5_hash(inst_dir)
+    data_dir   = os.path.join(APPDATA_DIR, 'MetaQuotes', 'Terminal', inst_hash)
     src_config = os.path.join(APPDATA_DIR, 'MetaQuotes', 'Terminal', MT5_BASE_HASH, 'config')
     dst_config = os.path.join(data_dir, 'config')
 
-    log(f"[{account_id[:8]}] Instance hash: {inst_hash}")
-    log(f"[{account_id[:8]}] Pre-bootstrapping data dir: {data_dir}")
+    log(f"[{account_id[:8]}] Instance hash : {inst_hash}")
+    log(f"[{account_id[:8]}] Data dir      : {data_dir}")
 
     os.makedirs(dst_config, exist_ok=True)
 
-    # Copy servers.dat
+    # Copy servers.dat — terminal จะรู้จัก server ของ broker
     src_srv = os.path.join(src_config, 'servers.dat')
     if os.path.exists(src_srv):
         shutil.copy2(src_srv, os.path.join(dst_config, 'servers.dat'))
@@ -153,7 +138,7 @@ def pre_bootstrap_instance_data(account_id: str, account: dict):
     else:
         err(f"[{account_id[:8]}]   ❌ servers.dat not found at {src_srv}")
 
-    # Copy certificates
+    # Copy certificates — ช่วยให้ terminal เชื่อมต่อ broker ได้เร็วขึ้น
     src_certs = os.path.join(src_config, 'certificates')
     dst_certs = os.path.join(dst_config, 'certificates')
     if os.path.exists(src_certs):
@@ -162,7 +147,7 @@ def pre_bootstrap_instance_data(account_id: str, account: dict):
         shutil.copytree(src_certs, dst_certs)
         log(f"[{account_id[:8]}]   ✅ certificates copied")
 
-    # เขียน common.ini ใน data dir ให้ terminal รู้ login/server
+    # เขียน common.ini — terminal อ่าน Login/Server จากนี้ตอนเปิด
     common_ini = os.path.join(dst_config, 'common.ini')
     with open(common_ini, 'w', encoding='utf-8') as f:
         f.write(
@@ -171,25 +156,35 @@ def pre_bootstrap_instance_data(account_id: str, account: dict):
             f'Server={account["server"]}\n'
             f'NewsEnable=0\n'
         )
-    log("[{}]   ✅ common.ini written ({}@{})".format(account_id[:8], account['login'], account['server']))
+    log(f"[{account_id[:8]}]   ✅ common.ini written ({account['login']}@{account['server']})")
 
-    # เขียน origin.txt
+    # เขียน origin.txt (MT5 ใช้ track ว่า exe อยู่ที่ไหน)
     with open(os.path.join(data_dir, 'origin.txt'), 'w', encoding='utf-8') as f:
         f.write(inst_dir)
 
     return data_dir
 
 def start_terminal(account_id: str) -> 'subprocess.Popen | None':
+    """
+    Start MT5 terminal แบบ minimized — ไม่มี dialog โผล่ขึ้นหน้าจอ
+    Terminal อ่าน Login/Server จาก common.ini ที่เตรียมไว้แล้ว
+    """
     exe = terminal_exe(account_id)
     if not os.path.exists(exe):
         err(f"[{account_id[:8]}] terminal64.exe not found: {exe}")
         return None
 
-    log(f"[{account_id[:8]}] Starting terminal: {exe}")
+    # STARTUPINFO — บอก Windows ให้เปิด window แบบ minimized
+    si = subprocess.STARTUPINFO()
+    si.dwFlags  |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 6   # SW_MINIMIZE
+
+    log(f"[{account_id[:8]}] Starting terminal (minimized): {exe}")
     try:
         proc = subprocess.Popen(
             [exe],
             cwd=instance_dir(account_id),
+            startupinfo=si,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -199,54 +194,12 @@ def start_terminal(account_id: str) -> 'subprocess.Popen | None':
         err(f"[{account_id[:8]}] ❌ Failed to start terminal: {e}")
         return None
 
-def _trigger_login_dialog(mt5_main_hwnd: int, account_id: str) -> bool:
-    """
-    เปิด Login dialog โดย scan File menu แล้วส่ง WM_COMMAND ตรงๆ
-    ไม่ใช้ keyboard focus — ทำงานได้แม้มี MT5 ตัวอื่น active อยู่
-    """
-    import win32con
-    try:
-        hmenu = win32gui.GetMenu(mt5_main_hwnd)
-        if not hmenu:
-            log(f"[{account_id[:8]}] No menu bar on hwnd={mt5_main_hwnd}")
-            return False
 
-        n_top = win32gui.GetMenuItemCount(hmenu)
-        log(f"[{account_id[:8]}] Scanning menu bar ({n_top} items)...")
-
-        for i in range(n_top):
-            try:
-                top_text = win32gui.GetMenuString(hmenu, i, win32con.MF_BYPOSITION)
-            except Exception:
-                top_text = f"[{i}]"
-
-            hsubmenu = win32gui.GetSubMenu(hmenu, i)
-            if not hsubmenu:
-                continue
-
-            n_sub = win32gui.GetMenuItemCount(hsubmenu)
-            for j in range(n_sub):
-                try:
-                    sub_text = win32gui.GetMenuString(hsubmenu, j, win32con.MF_BYPOSITION)
-                except Exception:
-                    sub_text = ""
-
-                if 'login' in sub_text.lower():
-                    cmd_id = win32gui.GetMenuItemID(hsubmenu, j)
-                    log(f"[{account_id[:8]}] Found '{sub_text}' (id={cmd_id}) in '{top_text}' menu")
-                    win32gui.PostMessage(mt5_main_hwnd, win32con.WM_COMMAND, cmd_id, 0)
-                    log(f"[{account_id[:8]}] ✅ Triggered Login via WM_COMMAND")
-                    return True
-
-        log(f"[{account_id[:8]}] ❌ Login menu item not found in any menu")
-        return False
-    except Exception as e:
-        err(f"[{account_id[:8]}] _trigger_login_dialog error: {e}")
-        return False
-
-
+# ────────────────────────────────────────────────────────
+# Login — program → program (ไม่ใช้ GUI เลย)
+# ────────────────────────────────────────────────────────
 def _scan_pid_windows(terminal_pid: int) -> dict:
-    """คืน dict ของ {title: hwnd} ทุก visible window ของ process นี้"""
+    """คืน {title: hwnd} ของทุก visible window ของ process นี้"""
     result = {}
     def cb(hwnd, _):
         try:
@@ -262,206 +215,114 @@ def _scan_pid_windows(terminal_pid: int) -> dict:
     return result
 
 
-def autologin_terminal(account: dict, terminal_pid: int, account_id: str) -> bool:
+def login_terminal(account: dict, terminal_pid: int, account_id: str,
+                   timeout: int = 120) -> bool:
     """
-    Phase 1 (ไม่ lock): รอ + dismiss LiveUpdate, ปิด "Open an Account",
-                         trigger Login dialog ผ่าน File menu ถ้าจำเป็น
-    Phase 2 (lock):     กรอก Login dialog ทีละตัวป้องกัน keyboard conflict
-    """
-    import win32con
+    Login MT5 terminal ผ่าน mt5.initialize() โดยตรง — ไม่มี GUI เลย
 
-    login    = str(account['login'])
-    password = str(account.get('password', ''))
-    server   = str(account['server'])
-
-    log(f"[{account_id[:8]}] Watching terminal windows (PID={terminal_pid})...")
-
-    login_hwnd        = None
-    last_trigger_time = 0.0          # กันการ trigger Login ซ้ำถี่เกินไป
-    deadline          = time.time() + 120   # รวม LiveUpdate + Open an Account + Login
-
-    while time.time() < deadline:
-        wins = _scan_pid_windows(terminal_pid)
-
-        if wins:
-            log(f"[{account_id[:8]}] Windows: {list(wins.keys())}")
-
-        # ── 0. ตรวจว่า terminal auto-login สำเร็จแล้วหรือยัง ──
-        # ถ้า window title มีเลข login อยู่ → MT5 เชื่อมต่อสำเร็จแล้ว ไม่ต้องเปิด dialog
-        for title in wins:
-            if login in title:
-                log(f"[{account_id[:8]}] ✅ Terminal already logged in as {login} (detected in title)")
-                return True
-
-        # ── 1. Dismiss LiveUpdate popup ── (FindWindow โดยตรง ไม่ต้องกรอง PID)
-        for lu_title in ('Welcome to LiveUpdate', 'LiveUpdate', 'MetaTrader 5 Update'):
-            lu_hwnd = win32gui.FindWindow(None, lu_title)
-            if lu_hwnd and win32gui.IsWindowVisible(lu_hwnd):
-                try:
-                    app2 = Application(backend='win32').connect(handle=lu_hwnd)
-                    dlg2 = app2.window(handle=lu_hwnd)
-                    dismissed = False
-                    for btn in dlg2.children(class_name='Button'):
-                        txt = btn.window_text()
-                        if txt.lower() in ('later', 'nein', 'no', 'cancel', 'позже'):
-                            btn.click()
-                            log(f"[{account_id[:8]}] ✅ Dismissed LiveUpdate ('{txt}')")
-                            dismissed = True
-                            time.sleep(0.5)
-                            break
-                    if not dismissed:
-                        win32gui.PostMessage(lu_hwnd, win32con.WM_CLOSE, 0, 0)
-                        log(f"[{account_id[:8]}] ✅ Dismissed LiveUpdate (WM_CLOSE)")
-                        time.sleep(0.5)
-                except Exception as e:
-                    log(f"[{account_id[:8]}] LiveUpdate dismiss error: {e}")
-
-        # ── 2. ปิด "Open an Account" wizard ── (FindWindow โดยตรง ไม่ต้องกรอง PID)
-        oa_hwnd = win32gui.FindWindow(None, "Open an Account")
-        if oa_hwnd and win32gui.IsWindowVisible(oa_hwnd):
-            try:
-                # กด Cancel ก่อน (ดีกว่า WM_CLOSE เพราะ MT5 จะรู้ว่า user กด Cancel)
-                app2 = Application(backend='win32').connect(handle=oa_hwnd)
-                dlg2 = app2.window(handle=oa_hwnd)
-                cancelled = False
-                for btn in dlg2.children(class_name='Button'):
-                    if btn.window_text().lower() in ('cancel', 'ยกเลิก', 'отмена'):
-                        btn.click()
-                        cancelled = True
-                        break
-                if not cancelled:
-                    win32gui.PostMessage(oa_hwnd, win32con.WM_CLOSE, 0, 0)
-                log(f"[{account_id[:8]}] ✅ Closed 'Open an Account' dialog")
-                time.sleep(1.5)  # รอให้ MT5 main window active
-                last_trigger_time = 0.0  # reset เพื่อ trigger Login ทันทีหลังปิด dialog
-            except Exception as e:
-                log(f"[{account_id[:8]}] Close 'Open an Account' error: {e}")
-
-        # ── 3. ถ้าเจอ Login dialog แล้ว → ออก loop ──
-        # scan อีกครั้งหลัง dismiss เพราะ wins อาจเก่าแล้ว
-        wins = _scan_pid_windows(terminal_pid)
-        if 'Login' in wins:
-            login_hwnd = wins['Login']
-            log(f"[{account_id[:8]}] Login dialog found hwnd={login_hwnd}")
-            break
-
-        # ── 4. ถ้า MT5 main window โผล่แล้วแต่ยังไม่มี Login → trigger Login dialog ──
-        #      trigger ซ้ำได้ แต่เว้นระยะ 8 วินาที เพื่อให้ dialog มีเวลาปรากฏ
-        mt5_main = None
-        for title, hwnd in wins.items():
-            cls = ''
-            try:
-                cls = win32gui.GetClassName(hwnd)
-            except Exception:
-                pass
-            log(f"[{account_id[:8]}]   window: '{title}' class='{cls}' hwnd={hwnd}")
-            if 'MetaQuotes' in cls or 'MetaTrader' in title:
-                mt5_main = hwnd
-
-        now = time.time()
-        if mt5_main and 'Login' not in wins and (now - last_trigger_time) >= 8:
-            log(f"[{account_id[:8]}] MT5 main found hwnd={mt5_main} — triggering Login dialog...")
-            _trigger_login_dialog(mt5_main, account_id)
-            last_trigger_time = now
-            time.sleep(2)
-
-        time.sleep(2)
-
-    if not login_hwnd:
-        err(f"[{account_id[:8]}] ❌ Login dialog not found after {int(time.time()-deadline+120)}s")
-        return False
-
-    # ── Phase 2: กรอก credentials ด้วย SendMessage (ไม่ต้อง focus) ──
-    log(f"[{account_id[:8]}] Filling credentials ({login}@{server}) via SendMessage...")
-    try:
-        import win32api
-        import win32con
-
-        app = Application(backend='win32').connect(handle=login_hwnd)
-        dlg = app.window(handle=login_hwnd)
-        edits = dlg.children(class_name='Edit')
-        log(f"[{account_id[:8]}] Edit fields: {len(edits)}")
-
-        def fill(edit, value, label):
-            """ส่ง WM_SETTEXT ตรงไปที่ HWND — ไม่ต้องการ focus"""
-            hwnd = edit.handle
-            win32api.SendMessage(hwnd, win32con.WM_SETTEXT, 0, value)
-            time.sleep(0.1)
-            log(f"[{account_id[:8]}]   ✅ {label}")
-
-        if len(edits) >= 5:
-            fill(edits[0], login,    'Login')
-            fill(edits[1], password, 'Password')
-            fill(edits[4], server,   'Server')
-        elif len(edits) >= 2:
-            fill(edits[0], login,    'Login')
-            fill(edits[1], password, 'Password')
-        else:
-            err(f"[{account_id[:8]}] ❌ Not enough Edit fields ({len(edits)})")
-            return False
-
-        time.sleep(0.3)
-
-        # ติ๊ก Save password + กด OK ด้วย PostMessage
-        ok_clicked = False
-        for btn in dlg.children(class_name='Button'):
-            txt = btn.window_text()
-            if 'save' in txt.lower():
-                try:
-                    win32api.SendMessage(btn.handle, win32con.BM_SETCHECK,
-                                        win32con.BST_CHECKED, 0)
-                except Exception:
-                    pass
-            if txt == 'OK':
-                win32gui.PostMessage(btn.handle, win32con.BM_CLICK, 0, 0)
-                ok_clicked = True
-                log(f"[{account_id[:8]}] ✅ Login submitted ({login}@{server})")
-
-        if not ok_clicked:
-            # fallback: กด Enter บน dialog
-            win32gui.PostMessage(login_hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
-            log(f"[{account_id[:8]}] ✅ Login submitted via VK_RETURN")
-
-        return True
-
-    except Exception as e:
-        err(f"[{account_id[:8]}] ❌ autologin error: {e}")
-        import traceback
-        err(traceback.format_exc())
-        return False
-
-def wait_for_pipe(account_id: str, terminal_pid: int, mt5_login: str, timeout: int = 180) -> bool:
-    """
-    รอให้ MT5 terminal login สำเร็จ
-    - วิธี 0: ตรวจ window title (เร็วที่สุด)
-    - วิธี 1: ตรวจ named pipe ผ่าน PowerShell
-    - วิธี 2: mt5.initialize() พร้อม mt5_lock
+    Flow:
+    1. ตรวจ window title ก่อน (terminal อาจ auto-login จาก certificate แล้ว)
+    2. ถ้ายังไม่ได้ → mt5.initialize(path, login, password, server) ส่ง credentials
+       ผ่าน IPC pipe โดยตรง — terminal login โดยไม่ต้องแสดง dialog ใดๆ
+    3. retry ทุก 5 วินาที จนครบ timeout
     """
     import psutil
+    import MetaTrader5 as mt5
 
-    inst_hash = calc_mt5_hash(instance_dir(account_id))
-    pipe_name = f"MetaQuotes-Server-{inst_hash}"
-    log(f"[{account_id[:8]}] Waiting for pipe: {pipe_name}")
+    login_str = str(account['login'])
+    password  = str(account.get('password', ''))
+    server    = str(account['server'])
+    exe       = terminal_exe(account_id)
+
+    log(f"[{account_id[:8]}] Logging in: {login_str}@{server}")
 
     deadline = time.time() + timeout
-    while time.time() < deadline:
+    attempt  = 0
 
-        # ตรวจว่า terminal ยังมีชีวิตอยู่
+    while time.time() < deadline:
+        attempt += 1
+
+        # ── ตรวจว่า terminal ยังมีชีวิต ──
         try:
             psutil.Process(terminal_pid)
         except psutil.NoSuchProcess:
             err(f"[{account_id[:8]}] ❌ Terminal process died (PID={terminal_pid})")
             return False
 
-        # วิธี 0: ตรวจจาก window title — "267806322 - Exness-MT5Real39:..." = logged in
+        # ── ตรวจ window title (auto-login จาก certificate) ──
+        wins = _scan_pid_windows(terminal_pid)
+        if any(login_str in t for t in wins):
+            log(f"[{account_id[:8]}] ✅ Auto-logged in (detected in title)")
+            return True
+
+        # ── ส่ง credentials ผ่าน mt5.initialize() IPC ──
+        log(f"[{account_id[:8]}] Attempt {attempt}: mt5.initialize()...")
+        if mt5_lock.acquire(timeout=15):
+            try:
+                ok = mt5.initialize(
+                    path=exe,
+                    login=int(login_str),
+                    password=password,
+                    server=server,
+                    timeout=15000,
+                )
+                if ok:
+                    info = mt5.account_info()
+                    if info and str(info.login) == login_str:
+                        log(f"[{account_id[:8]}] ✅ Logged in: {info.name} | bal={info.balance} {info.currency}")
+                        mt5.shutdown()
+                        return True
+                    else:
+                        log(f"[{account_id[:8]}] initialize() OK but account_info None — retrying")
+                else:
+                    log(f"[{account_id[:8]}] initialize() failed: {mt5.last_error()}")
+                mt5.shutdown()
+            except Exception as e:
+                err(f"[{account_id[:8]}] mt5 error: {e}")
+                try: mt5.shutdown()
+                except: pass
+            finally:
+                mt5_lock.release()
+        else:
+            log(f"[{account_id[:8]}] mt5_lock timeout — will retry")
+
+        time.sleep(5)
+
+    err(f"[{account_id[:8]}] ❌ Login timeout after {timeout}s")
+    return False
+
+
+def wait_for_pipe(account_id: str, terminal_pid: int, mt5_login: str,
+                  timeout: int = 60) -> bool:
+    """
+    ยืนยันว่า terminal login สำเร็จและ IPC pipe พร้อมใช้งาน
+    ใช้หลังจาก login_terminal() สำเร็จแล้ว timeout สั้นลงได้
+    - วิธี 0: window title (เร็วที่สุด)
+    - วิธี 1: named pipe (PowerShell Test-Path)
+    """
+    import psutil
+
+    inst_hash = calc_mt5_hash(instance_dir(account_id))
+    pipe_name = f"MetaQuotes-Server-{inst_hash}"
+    log(f"[{account_id[:8]}] Verifying pipe: {pipe_name}")
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+
+        try:
+            psutil.Process(terminal_pid)
+        except psutil.NoSuchProcess:
+            err(f"[{account_id[:8]}] ❌ Terminal died while waiting for pipe")
+            return False
+
+        # วิธี 0: window title
         wins = _scan_pid_windows(terminal_pid)
         for title in wins:
             if mt5_login in title:
-                log(f"[{account_id[:8]}] ✅ Terminal connected (title: {title[:60]})")
-                time.sleep(2)
+                log(f"[{account_id[:8]}] ✅ Pipe ready (title: {title[:60]})")
                 return True
 
-        # วิธี 1: ตรวจ named pipe โดยตรง
+        # วิธี 1: named pipe
         try:
             r = subprocess.run(
                 ['powershell', '-Command',
@@ -469,82 +330,58 @@ def wait_for_pipe(account_id: str, terminal_pid: int, mt5_login: str, timeout: i
                 capture_output=True, text=True, timeout=5
             )
             if 'True' in r.stdout:
-                log(f"[{account_id[:8]}] ✅ Pipe found: {pipe_name}")
-                # รอให้ terminal login จริงๆ อีกนิด
-                time.sleep(3)
+                log(f"[{account_id[:8]}] ✅ Pipe ready: {pipe_name}")
                 return True
         except Exception:
             pass
 
-        # วิธี 2: ลอง mt5.initialize() ด้วย lock (ทำทีละคน)
-        if mt5_lock.acquire(timeout=10):
-            try:
-                import MetaTrader5 as mt5
-                exe = terminal_exe(account_id)
-                if mt5.initialize(path=exe, timeout=5000):
-                    info = mt5.account_info()
-                    mt5.shutdown()
-                    if info:
-                        log(f"[{account_id[:8]}] ✅ MT5 connected (login={info.login})")
-                        return True
-                    mt5.shutdown()
-            except Exception:
-                pass
-            finally:
-                mt5_lock.release()
+        time.sleep(3)
 
-        time.sleep(5)
-
+    err(f"[{account_id[:8]}] ❌ Pipe not ready after {timeout}s")
     return False
 
+
+# ────────────────────────────────────────────────────────
+# Existing terminal detection (รองรับ controller restart)
+# ────────────────────────────────────────────────────────
 class _ProcessHandle:
-    """
-    Wrapper ที่ให้ interface เหมือน subprocess.Popen
-    ใช้ wrap psutil.Process ของ terminal ที่รันอยู่แล้ว (ไม่ได้ start เอง)
-    """
+    """Wrap psutil.Process ให้มี interface เหมือน subprocess.Popen"""
     def __init__(self, pid: int):
         import psutil as _psutil
-        self.pid  = pid
-        self._ps  = _psutil.Process(pid)
+        self.pid = pid
+        self._ps = _psutil.Process(pid)
 
     def poll(self):
         try:
-            if self._ps.is_running() and self._ps.status() != 'zombie':
-                return None
-            return 1
+            return None if (self._ps.is_running() and self._ps.status() != 'zombie') else 1
         except Exception:
             return 1
 
     def terminate(self):
-        try:
-            self._ps.terminate()
-        except Exception:
-            pass
+        try: self._ps.terminate()
+        except Exception: pass
 
     def wait(self, timeout=None):
-        try:
-            self._ps.wait(timeout=timeout)
-        except Exception:
-            pass
+        try: self._ps.wait(timeout=timeout)
+        except Exception: pass
 
 
 def find_running_terminal_pid(account_id: str) -> 'int | None':
-    """
-    ค้นหา PID ของ terminal64.exe ที่รันอยู่แล้วสำหรับ account นี้
-    ใช้ตรวจสอบก่อน start ใหม่ เพื่อกัน duplicate terminal
-    """
+    """หา PID ของ terminal ที่รันอยู่แล้ว (กัน duplicate เมื่อ controller restart)"""
     import psutil
-    target_exe = terminal_exe(account_id).lower()
+    target = terminal_exe(account_id).lower()
     for proc in psutil.process_iter(['pid', 'exe']):
         try:
-            exe = (proc.info.get('exe') or '').lower()
-            if exe == target_exe:
+            if (proc.info.get('exe') or '').lower() == target:
                 return proc.pid
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
     return None
 
 
+# ────────────────────────────────────────────────────────
+# Worker
+# ────────────────────────────────────────────────────────
 def start_worker(account: dict) -> 'subprocess.Popen | None':
     acc_id   = str(account['_id'])
     login    = str(account['login'])
@@ -566,7 +403,9 @@ def start_worker(account: dict) -> 'subprocess.Popen | None':
 
     log(f"[{acc_id[:8]}] Spawning worker (login={login})")
     try:
-        log_file = open(os.path.join(INSTANCES_DIR, f'{acc_id}_worker.log'), 'a', encoding='utf-8')
+        log_file = open(
+            os.path.join(INSTANCES_DIR, f'{acc_id}_worker.log'), 'a', encoding='utf-8'
+        )
         proc = subprocess.Popen(
             cmd,
             stdout=log_file,
@@ -579,29 +418,20 @@ def start_worker(account: dict) -> 'subprocess.Popen | None':
         err(f"[{acc_id[:8]}] ❌ Failed to spawn worker: {e}")
         return None
 
+
 def stop_account(account_id: str):
     state = running.pop(account_id, None)
     if not state:
         return
 
-    worker   = state.get('worker')
-    terminal = state.get('terminal')
-
-    if worker and worker.poll() is None:
-        log(f"[{account_id[:8]}] Stopping worker PID={worker.pid}")
-        try:
-            worker.terminate()
-            worker.wait(timeout=5)
-        except Exception as e:
-            err(f"[{account_id[:8]}] Worker terminate error: {e}")
-
-    if terminal and terminal.poll() is None:
-        log(f"[{account_id[:8]}] Stopping terminal PID={terminal.pid}")
-        try:
-            terminal.terminate()
-            terminal.wait(timeout=10)
-        except Exception as e:
-            err(f"[{account_id[:8]}] Terminal terminate error: {e}")
+    for name, proc in [('worker', state.get('worker')), ('terminal', state.get('terminal'))]:
+        if proc and proc.poll() is None:
+            log(f"[{account_id[:8]}] Stopping {name} PID={proc.pid}")
+            try:
+                proc.terminate()
+                proc.wait(timeout=10)
+            except Exception as e:
+                err(f"[{account_id[:8]}] {name} terminate error: {e}")
 
     log(f"[{account_id[:8]}] Stopped")
 
@@ -619,46 +449,59 @@ def fetch_accounts() -> list:
         err(f"fetch_accounts error: {e}")
     return []
 
+
 def setup_account_thread(account: dict):
-    """
-    รันใน thread แยก — setup account ตั้งแต่ต้นจนเปิด worker
-    """
+    """รันใน daemon thread — setup account ตั้งแต่ต้นจนเปิด worker"""
     acc_id = str(account['_id'])
     try:
-        log(f"[{acc_id[:8]}] New account — setting up... (thread)")
+        log(f"[{acc_id[:8]}] ── Setting up account (thread) ──")
 
-        # 1. Create instance (copy MT5 exe folder)
+        # ── 1. สร้าง MT5 instance (copy exe folder) ──
         if not create_instance(acc_id):
             return
 
-        # 2. Pre-bootstrap data dir: copy servers.dat + write common.ini
+        # ── 2. เตรียม data dir (servers.dat + common.ini + certificates) ──
         try:
             data_dir = pre_bootstrap_instance_data(acc_id, account)
             log(f"[{acc_id[:8]}] Data dir ready: {data_dir}")
         except Exception as e:
-            err(f"[{acc_id[:8]}] ❌ pre_bootstrap_instance_data failed: {e}")
+            err(f"[{acc_id[:8]}] ❌ pre_bootstrap failed: {e}")
             return
 
-        # 3. Start terminal
-        terminal_proc = start_terminal(acc_id)
-        if terminal_proc is None:
-            return
+        # ── 3. ตรวจว่ามี terminal รันอยู่แล้วหรือเปล่า (controller restart) ──
+        existing_pid = find_running_terminal_pid(acc_id)
+        if existing_pid:
+            log(f"[{acc_id[:8]}] Found existing terminal PID={existing_pid} — reusing")
+            terminal_proc = _ProcessHandle(existing_pid)
+            # ถ้า logged in แล้ว ข้ามขั้นตอน login
+            wins = _scan_pid_windows(existing_pid)
+            already_logged_in = any(str(account['login']) in t for t in wins)
+        else:
+            # ── 4. Start terminal (minimized, ไม่มี dialog) ──
+            terminal_proc = start_terminal(acc_id)
+            if terminal_proc is None:
+                return
+            already_logged_in = False
+            # รอให้ terminal initialize ก่อน login
+            time.sleep(5)
 
-        # 4. Autologin via GUI (fill Login dialog)
-        if not autologin_terminal(account, terminal_proc.pid, acc_id):
-            err(f"[{acc_id[:8]}] Autologin failed — skipping")
+        # ── 5. Login ผ่าน mt5.initialize() (program → program) ──
+        if not already_logged_in:
+            if not login_terminal(account, terminal_proc.pid, acc_id):
+                err(f"[{acc_id[:8]}] ❌ Login failed — aborting")
+                terminal_proc.terminate()
+                return
+        else:
+            log(f"[{acc_id[:8]}] ✅ Already logged in — skip login step")
+
+        # ── 6. ยืนยัน IPC pipe พร้อม ──
+        if not wait_for_pipe(acc_id, terminal_proc.pid, str(account['login']), timeout=60):
+            err(f"[{acc_id[:8]}] ❌ Pipe not ready — aborting")
             terminal_proc.terminate()
             return
 
-        # 5. รอ IPC pipe (= terminal logged in สำเร็จ)
-        log(f"[{acc_id[:8]}] Waiting for IPC pipe...")
-        if not wait_for_pipe(acc_id, terminal_proc.pid, str(account['login']), timeout=120):
-            err(f"[{acc_id[:8]}] IPC pipe timeout — skipping")
-            terminal_proc.terminate()
-            return
-
-        # 6. Start worker
-        time.sleep(3)
+        # ── 7. Start worker ──
+        time.sleep(2)
         worker_proc = start_worker(account)
         if worker_proc is None:
             terminal_proc.terminate()
@@ -674,6 +517,8 @@ def setup_account_thread(account: dict):
 
     except Exception as e:
         err(f"[{acc_id[:8]}] ❌ setup_account_thread error: {e}")
+        import traceback
+        err(traceback.format_exc())
     finally:
         with setting_up_lock:
             setting_up.discard(acc_id)
@@ -682,14 +527,14 @@ def setup_account_thread(account: dict):
 def sync_accounts(accounts: list):
     target_ids = {str(a['_id']) for a in accounts}
 
-    # Stop accounts ที่ไม่อยู่ใน target
+    # หยุด accounts ที่ถูกลบออก
     with running_lock:
-        to_stop = [acc_id for acc_id in running if acc_id not in target_ids]
-    for acc_id in to_stop:
-        log(f"[{acc_id[:8]}] Removed — shutting down")
-        stop_account(acc_id)
+        to_stop = [aid for aid in running if aid not in target_ids]
+    for aid in to_stop:
+        log(f"[{aid[:8]}] Removed — shutting down")
+        stop_account(aid)
 
-    # Start / restart accounts
+    # Start / crash-recovery
     for account in accounts:
         acc_id = str(account['_id'])
 
@@ -699,7 +544,6 @@ def sync_accounts(accounts: list):
             already_setting_up = acc_id in setting_up
 
         if not already_running and not already_setting_up:
-            # ยังไม่ได้ start → spawn thread ใหม่
             with setting_up_lock:
                 setting_up.add(acc_id)
             t = threading.Thread(
@@ -712,7 +556,6 @@ def sync_accounts(accounts: list):
             log(f"[{acc_id[:8]}] Setup thread spawned")
 
         elif already_running:
-            # ตรวจ crash แล้ว restart
             with running_lock:
                 state = running.get(acc_id)
             if not state:
@@ -721,26 +564,30 @@ def sync_accounts(accounts: list):
             worker   = state['worker']
             terminal = state['terminal']
 
+            # Worker crash → restart worker เท่านั้น
             if worker.poll() is not None:
-                log(f"[{acc_id[:8]}] Worker crashed (exit={worker.returncode}) — restarting...")
+                log(f"[{acc_id[:8]}] Worker crashed (exit={worker.returncode}) — restarting")
                 new_worker = start_worker(state['account'])
                 if new_worker:
                     with running_lock:
                         state['worker'] = new_worker
 
+            # Terminal crash → restart terminal + login + worker
             if terminal.poll() is not None:
-                log(f"[{acc_id[:8]}] Terminal closed — restarting...")
+                log(f"[{acc_id[:8]}] Terminal closed — restarting")
                 new_terminal = start_terminal(acc_id)
                 if new_terminal:
                     with running_lock:
                         state['terminal'] = new_terminal
-                    autologin_terminal(state['account'], new_terminal.pid, acc_id)
-                    if wait_for_pipe(acc_id, new_terminal.pid, str(state['account']['login']), timeout=120):
-                        worker.terminate()
-                        new_worker = start_worker(state['account'])
-                        if new_worker:
-                            with running_lock:
-                                state['worker'] = new_worker
+                    time.sleep(5)
+                    if login_terminal(state['account'], new_terminal.pid, acc_id):
+                        if wait_for_pipe(acc_id, new_terminal.pid,
+                                         str(state['account']['login']), timeout=60):
+                            worker.terminate()
+                            new_worker = start_worker(state['account'])
+                            if new_worker:
+                                with running_lock:
+                                    state['worker'] = new_worker
 
 
 # ────────────────────────────────────────────────────────
@@ -767,8 +614,8 @@ if __name__ == '__main__':
             sync_accounts(accounts)
         except KeyboardInterrupt:
             log("Shutting down...")
-            for acc_id in list(running.keys()):
-                stop_account(acc_id)
+            for aid in list(running.keys()):
+                stop_account(aid)
             sys.exit(0)
         except Exception as e:
             err(f"Unexpected error: {e}")
