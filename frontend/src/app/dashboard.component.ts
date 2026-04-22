@@ -4,6 +4,9 @@ import { Component, computed, effect, inject, signal } from '@angular/core'
 import { DailyBreakdown, StatTrade } from './models/stats'
 import { DashboardStore } from './stores/dashboard.store'
 import { AuthService } from './auth/auth.service'
+import { FriendPanelComponent } from './friends/friend-panel.component'
+import { FriendStatsComponent } from './friends/friend-stats.component'
+import { FriendshipService, Friend } from './friends/friendship.service'
 
 type DurationBucket = {
   label: string
@@ -28,16 +31,27 @@ type DayCard = DailyBreakdown & {
 
 @Component({
   selector: 'app-dashboard',
-  imports: [CommonModule],
+  imports: [CommonModule, FriendPanelComponent, FriendStatsComponent],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.css',
 })
 export class DashboardComponent {
   protected readonly store    = inject(DashboardStore)
   protected readonly auth     = inject(AuthService)
+  protected readonly friendSvc = inject(FriendshipService)
   protected readonly username = this.auth.getUsername()
 
+  // Friends feature
+  protected readonly showFriendPanel = signal(false)
+  protected readonly selectedFriend  = signal<Friend | null>(null)
+  protected readonly pendingCount    = signal(0)
+
   logout() { this.auth.logout() }
+
+  openFriendStats(friend: Friend) {
+    this.showFriendPanel.set(false)
+    this.selectedFriend.set(friend)
+  }
   protected readonly summary = this.store.summary
   protected readonly highlights = this.store.highlights
   protected readonly liveTrades = this.store.liveTrades
@@ -182,6 +196,11 @@ export class DashboardComponent {
       if (!this.calendarMonth() && month) {
         this.calendarMonth.set(month)
       }
+    })
+
+    // โหลด pending count สำหรับ badge บนปุ่ม Friends
+    this.friendSvc.listPending().subscribe(p => {
+      this.pendingCount.set(p.incoming.length)
     })
   }
 
@@ -380,17 +399,4 @@ export class DashboardComponent {
   private buildMaxLossLine() {
     const points = this.equitySeries()
     if (!points.length) {
-      return ''
-    }
-
-    const width = 1040
-    const height = 280
-    const values = points.map((point) => point.value)
-    const min = Math.min(-500, ...values)
-    const max = Math.max(0, ...values)
-    const range = max - min || 1
-    const threshold = Math.min(0, min + range * 0.2)
-    const y = height - ((threshold - min) / range) * height
-    return `0,${y} ${width},${y}`
-  }
-}
+      re

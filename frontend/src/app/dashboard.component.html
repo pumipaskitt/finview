@@ -1,3 +1,18 @@
+<!-- Friend Panel Overlay -->
+<app-friend-panel
+  *ngIf="showFriendPanel()"
+  (close)="showFriendPanel.set(false)"
+  (viewFriend)="openFriendStats($event)"
+></app-friend-panel>
+
+<!-- Friend Stats View -->
+<div class="friend-overlay" *ngIf="selectedFriend()">
+  <app-friend-stats
+    [friend]="selectedFriend()!"
+    (back)="selectedFriend.set(null)"
+  ></app-friend-stats>
+</div>
+
 <main class="dashboard" *ngIf="summary(); else loadingState">
   <section class="headline">
     <div>
@@ -8,6 +23,10 @@
       <span class="pill">Socket Live</span>
       <span class="pill soft">{{ summary()!.totalTrades }} closed trades</span>
       <span class="pill soft user-pill">{{ username }}</span>
+      <button class="friends-btn" (click)="showFriendPanel.set(true)">
+        👥 Friends
+        <span class="friends-badge" *ngIf="pendingCount() > 0">{{ pendingCount() }}</span>
+      </button>
       <button class="logout-btn" (click)="logout()">Logout</button>
     </div>
   </section>
@@ -303,16 +322,4 @@
     </div>
 
     <ng-template #noTrades>
-      <div class="empty-state">No socket trade event received yet.</div>
-    </ng-template>
-  </section>
-</main>
-
-<ng-template #loadingState>
-  <main class="dashboard">
-    <section class="panel loading-panel">
-      <h1>Loading dashboard...</h1>
-      <p>Backend is reachable, but stats have not been loaded yet.</p>
-    </section>
-  </main>
-</ng-template>
+      <div class="empty-state">No socket trade event 

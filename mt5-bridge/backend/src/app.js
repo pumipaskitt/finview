@@ -20,6 +20,7 @@ app.use(express.json({ limit: '5mb' }));
 // Routes
 app.use('/api/accounts', require('./routes/accounts'));
 app.use('/api/stats',    require('./routes/stats'));
+app.use('/api/friends',  require('./routes/friends'));
 app.use('/auth',         require('./routes/auth'));
 app.use('/internal',     require('./routes/internal'));
 app.get('/health', (_, res) => res.json({ ok: true, time: new Date() }));
