@@ -18,12 +18,12 @@ router.get('/search', async (req, res) => {
 
     const users = await User.find({
       username: { $regex: q, $options: 'i' },
-      _id:      { $ne: req.user._id },         // ไม่รวมตัวเอง
+      _id:      { $ne: req.user.userId },         // ไม่รวมตัวเอง
       role:     'user',
     }).select('username _id').limit(10);
 
     // เอา friendship status มาด้วย
-    const myId = req.user._id.toString();
+    const myId = req.user.userId.toString();
     const ids  = users.map(u => u._id);
     const friendships = await Friendship.find({
       $or: [
@@ -58,7 +58,7 @@ router.get('/search', async (req, res) => {
 router.post('/request/:userId', async (req, res) => {
   try {
     const to = req.params.userId;
-    if (to === req.user._id.toString()) {
+    if (to === req.user.userId.toString()) {
       return res.status(400).json({ error: 'Cannot add yourself' });
     }
     const target = await User.findById(to);
@@ -67,13 +67,13 @@ router.post('/request/:userId', async (req, res) => {
     // ตรวจว่ามีอยู่แล้วไหม
     const exists = await Friendship.findOne({
       $or: [
-        { requester: req.user._id, recipient: to },
-        { requester: to, recipient: req.user._id },
+        { requester: req.user.userId, recipient: to },
+        { requester: to, recipient: req.user.userId },
       ]
     });
     if (exists) return res.status(400).json({ error: 'Request already exists' });
 
-    const fs = await Friendship.create({ requester: req.user._id, recipient: to });
+    const fs = await Friendship.create({ requester: req.user.userId, recipient: to });
     res.json({ message: 'Request sent', friendshipId: fs._id });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -86,7 +86,7 @@ router.post('/accept/:id', async (req, res) => {
   try {
     const fs = await Friendship.findById(req.params.id);
     if (!fs) return res.status(404).json({ error: 'Not found' });
-    if (fs.recipient.toString() !== req.user._id.toString()) {
+    if (fs.recipient.toString() !== req.user.userId.toString()) {
       return res.status(403).json({ error: 'Not your request' });
     }
     fs.status = 'accepted';
@@ -104,7 +104,7 @@ router.delete('/:id', async (req, res) => {
     const fs = await Friendship.findById(req.params.id);
     if (!fs) return res.status(404).json({ error: 'Not found' });
 
-    const myId = req.user._id.toString();
+    const myId = req.user.userId.toString();
     if (fs.requester.toString() !== myId && fs.recipient.toString() !== myId) {
       return res.status(403).json({ error: 'Forbidden' });
     }
@@ -119,7 +119,7 @@ router.delete('/:id', async (req, res) => {
 // GET /api/friends
 router.get('/', async (req, res) => {
   try {
-    const myId = req.user._id;
+    const myId = req.user.userId;
     const friendships = await Friendship.find({
       $or: [{ requester: myId }, { recipient: myId }],
       status: 'accepted',
@@ -146,7 +146,7 @@ router.get('/', async (req, res) => {
 // GET /api/friends/pending
 router.get('/pending', async (req, res) => {
   try {
-    const myId = req.user._id;
+    const myId = req.user.userId;
     const incoming = await Friendship.find({ recipient: myId, status: 'pending' })
       .populate('requester', 'username');
     const outgoing = await Friendship.find({ requester: myId, status: 'pending' })
@@ -172,7 +172,7 @@ router.get('/pending', async (req, res) => {
 // ─── Privacy settings ────────────────────────────────────────
 // GET /api/friends/privacy
 router.get('/privacy', async (req, res) => {
-  const user = await User.findById(req.user._id).select('privacySettings');
+  const user = await User.findById(req.user.userId).select('privacySettings');
   res.json(user?.privacySettings ?? {});
 });
 
@@ -185,7 +185,7 @@ router.put('/privacy', async (req, res) => {
       update[`privacySettings.${key}`] = req.body[key];
     }
   }
-  await User.findByIdAndUpdate(req.user._id, { $set: update });
+  await User.findByIdAndUpdate(req.user.userId, { $set: update });
   res.json({ message: 'Saved' });
 });
 
@@ -193,7 +193,7 @@ router.put('/privacy', async (req, res) => {
 // GET /api/friends/:userId/stats
 router.get('/:userId/stats', async (req, res) => {
   try {
-    const myId   = req.user._id.toString();
+    const myId   = req.user.userId.toString();
     const target = req.params.userId;
 
     // ต้องเป็น friend ก่อนถึงจะดูได้
