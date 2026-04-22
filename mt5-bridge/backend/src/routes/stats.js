@@ -1,11 +1,11 @@
 const express  = require('express');
 const router   = express.Router();
-const authMw   = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
 const Account  = require('../models/Account');
 const Trade    = require('../models/Trade');
 
 // GET /api/stats — ดึง stats ของ account ที่ผูกกับ user ที่ login
-router.get('/', authMw, async (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   try {
     const accountId = req.user.accountId;
     const trades    = await Trade.find({ accountId }).sort({ time: 1 });
