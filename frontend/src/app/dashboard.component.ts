@@ -3,6 +3,7 @@ import { Component, computed, effect, inject, signal } from '@angular/core'
 
 import { DailyBreakdown, StatTrade } from './models/stats'
 import { DashboardStore } from './stores/dashboard.store'
+import { AuthService } from './auth/auth.service'
 
 type DurationBucket = {
   label: string
@@ -32,7 +33,11 @@ type DayCard = DailyBreakdown & {
   styleUrl: './dashboard.component.css',
 })
 export class DashboardComponent {
-  protected readonly store = inject(DashboardStore)
+  protected readonly store    = inject(DashboardStore)
+  protected readonly auth     = inject(AuthService)
+  protected readonly username = this.auth.getUsername()
+
+  logout() { this.auth.logout() }
   protected readonly summary = this.store.summary
   protected readonly highlights = this.store.highlights
   protected readonly liveTrades = this.store.liveTrades

@@ -59,9 +59,9 @@ Thumbs.db
 # ────────────────────────────────────────────────────────
 # Folders ที่ไม่ได้ใช้ใน production
 # ────────────────────────────────────────────────────────
-admin-dashboard/
-backend/
-trading-bridge/
-trading-dashboard/
-mt5_ea/
-mt5_matcher/
+/admin-dashboard/
+/backend/
+/trading-bridge/
+/trading-dashboard/
+/mt5_ea/
+/mt5_matcher/
