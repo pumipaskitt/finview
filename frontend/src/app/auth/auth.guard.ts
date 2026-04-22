@@ -6,7 +6,16 @@ export const authGuard: CanActivateFn = () => {
   const auth   = inject(AuthService);
   const router = inject(Router);
 
-  if (auth.isLoggedIn()) return true;
-  router.navigate(['/login']);
-  return false;
+  if (!auth.isLoggedIn()) {
+    router.navigate(['/login']);
+    return false;
+  }
+
+  // admin ที่เข้ามาหน้า / ให้ redirect ไป /admin
+  if (auth.isAdmin()) {
+    router.navigate(['/admin']);
+    return false;
+  }
+
+  return true;
 };
