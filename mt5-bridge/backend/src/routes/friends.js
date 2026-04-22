@@ -276,4 +276,16 @@ router.get('/:userId/stats', async (req, res) => {
         averageTradeDurationSec:    0,
         averageWinDurationSec:      0,
         averageLossDurationSec:     0,
-        monthlyPnL:                 privacy.showPnL ? monthly : []
+        monthlyPnL:                 privacy.showPnL ? monthly : []      },
+      breakdowns: {
+        daily:   privacy.showChart ? daily   : [],
+        monthly: privacy.showPnL   ? monthly : [],
+      },
+      trades: statTrades,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = router;
