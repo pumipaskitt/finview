@@ -8,6 +8,8 @@ import { Account } from '../../models/account.model';
 import { AccountService } from '../../services/account.service';
 import { AccountFormComponent } from '../account-form/account-form.component';
 import { environment } from '../../../../environments/environment';
+import { AuthService } from '../../../auth/auth.service';
+import { inject } from '@angular/core';
 
 @Component({
   selector: 'app-account-list',
@@ -15,6 +17,15 @@ import { environment } from '../../../../environments/environment';
   imports: [CommonModule, RouterModule, AccountFormComponent, FormsModule],
   template: `
     <div class="page">
+
+      <!-- Topbar -->
+      <div class="topbar">
+        <span class="topbar-title">finView <span class="topbar-badge">Admin</span></span>
+        <div class="topbar-right">
+          <span class="topbar-user">{{ username }}</span>
+          <button class="logout-btn" (click)="logout()">Logout</button>
+        </div>
+      </div>
 
       <!-- Tabs -->
       <div class="tabs">
@@ -177,6 +188,13 @@ import { environment } from '../../../../environments/environment';
     .user-info { display:flex; gap:12px; align-items:center; }
     .user-name { font-weight:600; font-size:15px; }
     .user-account { font-size:13px; color:#6b7280; }
+    .topbar { display:flex; justify-content:space-between; align-items:center; padding:14px 0 20px; border-bottom:1px solid #e5e7eb; margin-bottom:24px; }
+    .topbar-title { font-size:18px; font-weight:700; color:#111827; }
+    .topbar-badge { background:#dbeafe; color:#1e40af; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; margin-left:8px; vertical-align:middle; }
+    .topbar-right { display:flex; align-items:center; gap:12px; }
+    .topbar-user { font-size:13px; color:#6b7280; font-weight:500; }
+    .logout-btn { background:#fee2e2; color:#991b1b; border:none; padding:7px 14px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600; transition:background 0.2s; }
+    .logout-btn:hover { background:#fecaca; }
   `]
 })
 export class AccountListComponent implements OnInit, OnDestroy {
@@ -191,8 +209,11 @@ export class AccountListComponent implements OnInit, OnDestroy {
   newUser = { username: '', password: '', accountId: '' };
   private sub!: Subscription;
   private api = environment.apiUrl;
+  private auth = inject(AuthService);
+  username = this.auth.getUsername() ?? 'admin';
 
   get connectedCount() { return this.accounts.filter(a => a.status === 'connected').length; }
+  logout() { this.auth.logout(); }
 
   constructor(private svc: AccountService, private http: HttpClient) {}
 
