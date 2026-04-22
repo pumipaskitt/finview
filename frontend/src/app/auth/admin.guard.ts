@@ -2,7 +2,7 @@ import { inject } from '@angular/core';
 import { CanActivateFn, Router } from '@angular/router';
 import { AuthService } from './auth.service';
 
-export const authGuard: CanActivateFn = () => {
+export const adminGuard: CanActivateFn = () => {
   const auth   = inject(AuthService);
   const router = inject(Router);
 
@@ -11,9 +11,9 @@ export const authGuard: CanActivateFn = () => {
     return false;
   }
 
-  // admin ที่เข้ามาหน้า / ให้ redirect ไป /admin
-  if (auth.isAdmin()) {
-    router.navigate(['/admin']);
+  if (!auth.isAdmin()) {
+    // user ปกติ → redirect กลับ dashboard ของตัวเอง
+    router.navigate(['/']);
     return false;
   }
 

@@ -136,7 +136,11 @@ export class LoginComponent {
     this.error   = '';
 
     this.auth.login(this.username, this.password).subscribe({
-      next: () => { this.loading = false; this.router.navigate(['/']); },
+      next: () => {
+        this.loading = false;
+        // redirect ตาม role
+        this.router.navigate([this.auth.isAdmin() ? '/admin' : '/']);
+      },
       error: (e) => {
         this.loading = false;
         this.error = e.error?.error || 'Login failed';

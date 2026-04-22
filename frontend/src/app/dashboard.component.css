@@ -602,3 +602,24 @@ h1 {
     padding: 8px;
   }
 }
+
+.logout-btn {
+  padding: 6px 16px;
+  background: transparent;
+  color: var(--loss);
+  border: 1px solid rgba(255, 115, 115, 0.4);
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  white-space: nowrap;
+}
+.logout-btn:hover {
+  background: rgba(255, 115, 115, 0.1);
+  border-color: var(--loss);
+}
+.user-pill {
+  font-weight: 600;
+  color: var(--accent);
+}

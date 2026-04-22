@@ -11,14 +11,20 @@ export class AuthService {
   private base   = environment.apiUrl;
 
   login(username: string, password: string) {
-    return this.http.post<{ token: string; username: string; accountId: string }>(
+    return this.http.post<{
+      token: string;
+      username: string;
+      role: string;
+      accountId: string;
+    }>(
       `${this.base}/auth/login`,
       { username, password }
     ).pipe(
       tap(res => {
         localStorage.setItem('token',     res.token);
         localStorage.setItem('username',  res.username);
-        localStorage.setItem('accountId', res.accountId);
+        localStorage.setItem('role',      res.role);
+        localStorage.setItem('accountId', res.accountId ?? '');
       })
     );
   }
@@ -28,7 +34,10 @@ export class AuthService {
     this.router.navigate(['/login']);
   }
 
-  getToken()    { return localStorage.getItem('token'); }
-  getUsername() { return localStorage.getItem('username'); }
-  isLoggedIn()  { return !!this.getToken(); }
+  getToken()     { return localStorage.getItem('token'); }
+  getUsername()  { return localStorage.getItem('username'); }
+  getRole()      { return localStorage.getItem('role'); }
+  getAccountId() { return localStorage.getItem('accountId'); }
+  isLoggedIn()   { return !!this.getToken(); }
+  isAdmin()      { return this.getRole() === 'admin'; }
 }
