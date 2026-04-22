@@ -33,9 +33,10 @@ router.get('/search', async (req, res) => {
     });
 
     const result = users.map(u => {
+      const uid = u._id.toString();
       const fs = friendships.find(f =>
-        f.requester.toString() === u._id.toString() ||
-        f.recipient.toString() === u._id.toString()
+        f.requester?.toString() === uid ||
+        f.recipient?.toString() === uid
       );
       return {
         _id:      u._id,
