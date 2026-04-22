@@ -322,4 +322,16 @@
     </div>
 
     <ng-template #noTrades>
-      <div class="empty-state">No socket trade event 
+      <div class="empty-state">No socket trade event  received yet.</div>
+    </ng-template>
+  </section>
+</main>
+
+<ng-template #loadingState>
+  <main class="dashboard">
+    <section class="panel loading-panel">
+      <h1>Loading dashboard...</h1>
+      <p>Backend is reachable, but stats have not been loaded yet.</p>
+    </section>
+  </main>
+</ng-template>

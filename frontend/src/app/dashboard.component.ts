@@ -399,4 +399,17 @@ export class DashboardComponent {
   private buildMaxLossLine() {
     const points = this.equitySeries()
     if (!points.length) {
-      re
+      return ''
+    }
+
+    const width = 1040
+    const height = 280
+    const values = points.map((point) => point.value)
+    const min = Math.min(-500, ...values)
+    const max = Math.max(0, ...values)
+    const range = max - min || 1
+    const threshold = Math.min(0, min + range * 0.2)
+    const y = height - ((threshold - min) / range) * height
+    return `0,${y} ${width},${y}`
+  }
+}
